@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"slices"
 )
 
 func DoMapTask(map_task MapTask, mapf func(string, string) []KeyValue, nReduce int) {
@@ -86,13 +85,12 @@ func (c *Coordinator) MapTaskDone(args *MapTaskDoneArgs, reply *MapTaskDoneReply
 	// init ready reduce tasks
 	for reduce_task_num := 0; reduce_task_num < c.NReduce; reduce_task_num++ {
 		intermediate_file_name := fmt.Sprintf("mr-%d-%d", args.TaskNum, reduce_task_num)
-		// if the intermediate file is not already in the reduce task, add it
-		if !slices.Contains(c.ReduceTasks[reduce_task_num].Files, intermediate_file_name) {
-			c.ReduceTasks[reduce_task_num].Files = append(c.ReduceTasks[reduce_task_num].Files, intermediate_file_name)
 
-			if len(c.ReduceTasks[reduce_task_num].Files) == c.NMap {
-				c.ReduceTasks[reduce_task_num].TaskState = IDLE_READY
-			}
+		// add the intermediate file to the reduce task
+		c.ReduceTasks[reduce_task_num].Files = append(c.ReduceTasks[reduce_task_num].Files, intermediate_file_name)
+
+		if len(c.ReduceTasks[reduce_task_num].Files) == c.NMap {
+			c.ReduceTasks[reduce_task_num].TaskState = IDLE_READY
 		}
 	}
 	mu.Unlock()

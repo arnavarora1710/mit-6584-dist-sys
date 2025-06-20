@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-go run mrworker.go wc.so
+go run mrworker.go indexer.so

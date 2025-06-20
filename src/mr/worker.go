@@ -45,6 +45,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		nReduce := map_task_reply.NReduce
 
+		fmt.Printf("worker %v working on map task: %v\n", os.Getpid(), map_task)
+
 		DoMapTask(map_task, mapf, nReduce)
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -59,6 +61,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
+
+		fmt.Printf("worker %v working on reduce task: %v\n", os.Getpid(), reduce_task)
 
 		DoReduceTask(reduce_task, reducef)
 		time.Sleep(10 * time.Millisecond)

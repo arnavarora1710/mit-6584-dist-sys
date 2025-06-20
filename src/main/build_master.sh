@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-go build -buildmode=plugin ../mrapps/wc.go
+go build -buildmode=plugin ../mrapps/indexer.go
 rm mr-out*
 go run mrcoordinator.go pg*.txt
