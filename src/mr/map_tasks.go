@@ -1,9 +1,61 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
 	"slices"
 )
+
+func DoMapTask(map_task MapTask, mapf func(string, string) []KeyValue, nReduce int) {
+	file_name := map_task.File
+
+	// read file
+	file, err := os.Open(file_name)
+	if err != nil {
+		log.Fatalf("cannot open %v", file_name)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", file_name)
+	}
+	file.Close()
+
+	// run map function on file and get list of key value pairs
+	kva := mapf(file_name, string(content))
+
+	// all intermediate files map to a reduce task
+	// map each key value pair to a reduce task file
+	map_file_to_kvs := make(map[int][]KeyValue)
+	for _, kv := range kva {
+		index := ihash(kv.Key) % nReduce
+		map_file_to_kvs[index] = append(map_file_to_kvs[index], kv)
+	}
+
+	// create intermediate files
+	intermediate_files := make([]*os.File, nReduce)
+	for i := 0; i < nReduce; i++ {
+		// intermediate file name: mr-<map_task_num>-<reduce_task_num>
+		intermediate_files[i], err = os.Create(fmt.Sprintf("mr-%d-%d", map_task.TaskNum, i))
+		if err != nil {
+			log.Fatalf("cannot create intermediate file %v", i)
+		}
+
+		// push key value pairs corresponding to the current intermediate file
+		enc := json.NewEncoder(intermediate_files[i])
+		for _, kv := range map_file_to_kvs[i] {
+			err := enc.Encode(&kv)
+			if err != nil {
+				log.Fatalf("cannot encode intermediate file %v", i)
+			}
+		}
+		intermediate_files[i].Close()
+	}
+	// rpc the coordinator that the map task is done
+	MapTaskDone(map_task.TaskNum)
+}
 
 func (c *Coordinator) GiveMapTask(args *MapTaskArgs, reply *MapTaskReply) error {
 	reply.NReduce = c.NReduce
