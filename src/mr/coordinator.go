@@ -81,7 +81,7 @@ func (c *Coordinator) WorkerInit(args *WorkerInitArgs, reply *WorkerInitReply) e
 	return nil
 }
 
-// start a thread that checks on workers every 5 seconds
+// start a thread that checks on workers
 func (c *Coordinator) checkOnWorkers() {
 	go func() {
 		for {
@@ -103,7 +103,6 @@ func (c *Coordinator) checkOnWorkers() {
 				}
 			}
 			mu.Unlock()
-			time.Sleep(5 * time.Second)
 		}
 	}()
 }
