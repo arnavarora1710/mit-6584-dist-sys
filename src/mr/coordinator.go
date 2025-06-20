@@ -1,12 +1,14 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 var mu sync.Mutex
@@ -26,12 +28,30 @@ type MapTask struct {
 	TaskNum   int
 	TaskState TaskState
 	File      string
+	WorkerId  int
 }
 
 type ReduceTask struct {
 	TaskNum   int
 	TaskState TaskState
 	Files     []string
+	WorkerId  int
+}
+
+type WorkerState int
+
+const (
+	WORKER_IDLE WorkerState = iota
+	WORKER_IN_PROGRESS
+	WORKER_CRASHED
+)
+
+type WorkerInfo struct {
+	WorkerId     int
+	State        WorkerState
+	TimeAssigned time.Time
+	MapTask      MapTask
+	ReduceTask   ReduceTask
 }
 
 type Coordinator struct {
@@ -43,6 +63,49 @@ type Coordinator struct {
 	NReduce int
 	// number of map tasks
 	NMap int
+	// list of workers
+	Workers map[int]WorkerInfo
+}
+
+func (c *Coordinator) WorkerInit(args *WorkerInitArgs, reply *WorkerInitReply) error {
+	mu.Lock()
+	fmt.Printf("WorkerInit: %v\n", args.WorkerId)
+	c.Workers[args.WorkerId] = WorkerInfo{
+		WorkerId:     args.WorkerId,
+		State:        WORKER_IDLE,
+		TimeAssigned: time.Now(),
+		MapTask:      MapTask{},
+		ReduceTask:   ReduceTask{},
+	}
+	mu.Unlock()
+	return nil
+}
+
+// start a thread that checks on workers every 5 seconds
+func (c *Coordinator) checkOnWorkers() {
+	go func() {
+		for {
+			mu.Lock()
+			for worker_id, worker_info := range c.Workers {
+				if worker_info.State == WORKER_IN_PROGRESS && time.Since(worker_info.TimeAssigned) > 10*time.Second {
+					if worker_info.MapTask.TaskState == IN_PROGRESS {
+						c.MapTasks[worker_info.MapTask.TaskNum].TaskState = IDLE_READY
+					} else if worker_info.ReduceTask.TaskState == IN_PROGRESS {
+						c.ReduceTasks[worker_info.ReduceTask.TaskNum].TaskState = IDLE_READY
+					}
+					c.Workers[worker_id] = WorkerInfo{
+						WorkerId:     worker_id,
+						State:        WORKER_CRASHED,
+						TimeAssigned: time.Now(),
+						MapTask:      MapTask{},
+						ReduceTask:   ReduceTask{},
+					}
+				}
+			}
+			mu.Unlock()
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -85,12 +148,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 	c.NReduce = nReduce
 	c.NMap = len(files)
+	c.Workers = make(map[int]WorkerInfo)
 
 	for i, file := range files {
 		c.MapTasks = append(c.MapTasks, MapTask{
 			TaskNum:   i,
 			TaskState: IDLE_READY,
 			File:      file,
+			WorkerId:  -1,
 		})
 	}
 
@@ -99,9 +164,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			TaskNum:   i,
 			TaskState: IDLE_NOT_READY,
 			Files:     []string{},
+			WorkerId:  -1,
 		})
 	}
 
 	c.server()
+	c.checkOnWorkers()
 	return &c
 }

@@ -6,9 +6,10 @@ import (
 	"log"
 	"os"
 	"sort"
+	"time"
 )
 
-func DoReduceTask(reduce_task ReduceTask, reducef func(string, []string) string) {
+func DoReduceTask(worker_id int, reduce_task ReduceTask, reducef func(string, []string) string) {
 	intermediate := []KeyValue{}
 	for _, file_name := range reduce_task.Files {
 		// read file
@@ -30,8 +31,8 @@ func DoReduceTask(reduce_task ReduceTask, reducef func(string, []string) string)
 	// sort key value pairs
 	sort.Sort(ByKey(intermediate))
 
-	// make reduce file if it doesn't exist
-	reduce_file, err := os.OpenFile(fmt.Sprintf("mr-out-%d", reduce_task.TaskNum), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// write to a temp file (in case of failure)
+	reduce_file, err := os.CreateTemp("", fmt.Sprintf("mr-out-%d", reduce_task.TaskNum))
 	if err != nil {
 		log.Fatalf("cannot create reduce file %v", reduce_task.TaskNum)
 	}
@@ -55,6 +56,9 @@ func DoReduceTask(reduce_task ReduceTask, reducef func(string, []string) string)
 	}
 	reduce_file.Close()
 
+	// rename the temp file to the final file
+	os.Rename(reduce_file.Name(), fmt.Sprintf("mr-out-%d", reduce_task.TaskNum))
+
 	// rpc the coordinator that the reduce task is done
 	ReduceTaskDone(reduce_task.TaskNum)
 }
@@ -65,14 +69,25 @@ func (c *Coordinator) GiveReduceTask(args *ReduceTaskArgs, reply *ReduceTaskRepl
 	mu.Lock()
 	found_ready := false
 	found_idle_not_ready := false
+	all_tasks_done := true
 	for i, task := range c.ReduceTasks {
 		if task.TaskState == IDLE_READY {
 			c.ReduceTasks[i].TaskState = IN_PROGRESS
+			c.ReduceTasks[i].WorkerId = args.WorkerId
+			c.Workers[args.WorkerId] = WorkerInfo{
+				WorkerId:     args.WorkerId,
+				State:        WORKER_IN_PROGRESS,
+				TimeAssigned: time.Now(),
+				MapTask:      MapTask{},
+				ReduceTask:   c.ReduceTasks[i],
+			}
 			reply.ReduceTask = c.ReduceTasks[i]
 			found_ready = true
 			break
 		} else if task.TaskState == IDLE_NOT_READY {
 			found_idle_not_ready = true
+		} else if task.TaskState != DONE {
+			all_tasks_done = false
 		}
 	}
 	mu.Unlock()
@@ -83,14 +98,17 @@ func (c *Coordinator) GiveReduceTask(args *ReduceTaskArgs, reply *ReduceTaskRepl
 	var task_state TaskState
 	if found_idle_not_ready {
 		task_state = NO_TASK_READY
-	} else {
+	} else if all_tasks_done {
 		task_state = NO_MORE_TASKS
+	} else {
+		task_state = NO_TASK_READY
 	}
 
 	reply.ReduceTask = ReduceTask{
 		TaskNum:   -1,
 		TaskState: task_state,
 		Files:     []string{},
+		WorkerId:  -1,
 	}
 	return nil
 }
@@ -98,12 +116,22 @@ func (c *Coordinator) GiveReduceTask(args *ReduceTaskArgs, reply *ReduceTaskRepl
 func (c *Coordinator) ReduceTaskDone(args *ReduceTaskDoneArgs, reply *ReduceTaskDoneReply) error {
 	mu.Lock()
 	c.ReduceTasks[args.TaskNum].TaskState = DONE
+	worker_id := c.ReduceTasks[args.TaskNum].WorkerId
+	c.Workers[worker_id] = WorkerInfo{
+		WorkerId:     worker_id,
+		State:        WORKER_IDLE,
+		TimeAssigned: time.Now(),
+		MapTask:      MapTask{},
+		ReduceTask:   ReduceTask{},
+	}
 	mu.Unlock()
 	return nil
 }
 
-func GetReduceTask() ReduceTaskReply {
-	args := ReduceTaskArgs{}
+func GetReduceTask(worker_id int) ReduceTaskReply {
+	args := ReduceTaskArgs{
+		WorkerId: worker_id,
+	}
 	reply := ReduceTaskReply{}
 	call("Coordinator.GiveReduceTask", &args, &reply)
 	return reply

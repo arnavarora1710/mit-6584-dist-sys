@@ -31,28 +31,41 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func initWorker() int {
+	worker_id := os.Getpid()
+	worker_init_args := WorkerInitArgs{
+		WorkerId: worker_id,
+	}
+	worker_init_reply := WorkerInitReply{}
+	call("Coordinator.WorkerInit", &worker_init_args, &worker_init_reply)
+	return worker_id
+}
+
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	worker_id := initWorker()
 	for {
-		map_task_reply := GetMapTask()
-		fmt.Printf("map task reply: %v\n", map_task_reply)
+		map_task_reply := GetMapTask(worker_id)
 		map_task := map_task_reply.MapTask
 
 		if map_task.TaskState == NO_MORE_TASKS {
 			break
+		} else if map_task.TaskState == NO_TASK_READY {
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 
 		nReduce := map_task_reply.NReduce
 
 		fmt.Printf("worker %v working on map task: %v\n", os.Getpid(), map_task)
 
-		DoMapTask(map_task, mapf, nReduce)
+		DoMapTask(worker_id, map_task, mapf, nReduce)
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	for {
-		reduce_task_ask := GetReduceTask()
+		reduce_task_ask := GetReduceTask(worker_id)
 		reduce_task := reduce_task_ask.ReduceTask
 
 		if reduce_task.TaskState == NO_MORE_TASKS {
@@ -64,7 +77,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		fmt.Printf("worker %v working on reduce task: %v\n", os.Getpid(), reduce_task)
 
-		DoReduceTask(reduce_task, reducef)
+		DoReduceTask(worker_id, reduce_task, reducef)
 		time.Sleep(10 * time.Millisecond)
 	}
 }

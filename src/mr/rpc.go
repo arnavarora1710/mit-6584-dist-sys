@@ -11,7 +11,14 @@ import (
 	"strconv"
 )
 
+type WorkerInitArgs struct {
+	WorkerId int
+}
+
+type WorkerInitReply struct{}
+
 type MapTaskArgs struct {
+	WorkerId int
 }
 
 type MapTaskReply struct {
@@ -23,10 +30,11 @@ type MapTaskDoneArgs struct {
 	TaskNum int
 }
 
-type MapTaskDoneReply struct {
-}
+type MapTaskDoneReply struct{}
 
-type ReduceTaskArgs struct{}
+type ReduceTaskArgs struct {
+	WorkerId int
+}
 
 type ReduceTaskReply struct {
 	ReduceTask ReduceTask
@@ -36,8 +44,7 @@ type ReduceTaskDoneArgs struct {
 	TaskNum int
 }
 
-type ReduceTaskDoneReply struct {
-}
+type ReduceTaskDoneReply struct{}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
