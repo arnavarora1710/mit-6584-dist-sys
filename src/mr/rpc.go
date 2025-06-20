@@ -11,20 +11,32 @@ import (
 	"strconv"
 )
 
-type TaskArgs struct {
+type MapTaskArgs struct {
 }
 
-type TaskReply struct {
-	Task    Task
+type MapTaskReply struct {
+	MapTask MapTask
 	NReduce int
 }
 
-type TaskDoneArgs struct {
+type MapTaskDoneArgs struct {
 	TaskNum int
-	IsMap   bool
 }
 
-type TaskDoneReply struct {
+type MapTaskDoneReply struct {
+}
+
+type ReduceTaskArgs struct{}
+
+type ReduceTaskReply struct {
+	ReduceTask ReduceTask
+}
+
+type ReduceTaskDoneArgs struct {
+	TaskNum int
+}
+
+type ReduceTaskDoneReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name

@@ -9,8 +9,6 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -36,8 +34,8 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func DoMapTask(task Task, mapf func(string, string) []KeyValue, nReduce int) {
-	file_name := task.File
+func DoMapTask(map_task MapTask, mapf func(string, string) []KeyValue, nReduce int) {
+	file_name := map_task.File
 
 	// read file
 	file, err := os.Open(file_name)
@@ -65,7 +63,7 @@ func DoMapTask(task Task, mapf func(string, string) []KeyValue, nReduce int) {
 	intermediate_files := make([]*os.File, nReduce)
 	for i := 0; i < nReduce; i++ {
 		// intermediate file name: mr-<map_task_num>-<reduce_task_num>
-		intermediate_files[i], err = os.Create(fmt.Sprintf("mr-%d-%d", task.TaskNum, i))
+		intermediate_files[i], err = os.Create(fmt.Sprintf("mr-%d-%d", map_task.TaskNum, i))
 		if err != nil {
 			log.Fatalf("cannot create intermediate file %v", i)
 		}
@@ -81,39 +79,35 @@ func DoMapTask(task Task, mapf func(string, string) []KeyValue, nReduce int) {
 		intermediate_files[i].Close()
 	}
 	// rpc the coordinator that the map task is done
-	TaskDone(task.TaskNum, true)
+	MapTaskDone(map_task.TaskNum)
 }
 
-func DoReduceTask(task Task, reducef func(string, []string) string) {
-	file_name := task.File
-
-	// read file
-	file, err := os.Open(file_name)
-	if err != nil {
-		log.Fatalf("cannot open %v", file_name)
-	}
-	dec := json.NewDecoder(file)
+func DoReduceTask(reduce_task ReduceTask, reducef func(string, []string) string) {
 	intermediate := []KeyValue{}
-	for {
-		var kv KeyValue
-		if err := dec.Decode(&kv); err != nil {
-			break
+	for _, file_name := range reduce_task.Files {
+		// read file
+		file, err := os.Open(file_name)
+		if err != nil {
+			log.Fatalf("cannot open %v", file_name)
 		}
-		intermediate = append(intermediate, kv)
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+		file.Close()
 	}
-	file.Close()
 
 	// sort key value pairs
 	sort.Sort(ByKey(intermediate))
 
 	// make reduce file if it doesn't exist
-	reduce_num, err := strconv.Atoi(task.File[strings.LastIndex(task.File, "-")+1:])
+	reduce_file, err := os.OpenFile(fmt.Sprintf("mr-out-%d", reduce_task.TaskNum), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatalf("cannot convert reduce file name to int %v", task.File)
-	}
-	reduce_file, err := os.OpenFile(fmt.Sprintf("mr-out-%d", reduce_num), os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("cannot create reduce file %v", reduce_num)
+		log.Fatalf("cannot create reduce file %v", reduce_task.TaskNum)
 	}
 
 	i := 0
@@ -136,52 +130,41 @@ func DoReduceTask(task Task, reducef func(string, []string) string) {
 	reduce_file.Close()
 
 	// rpc the coordinator that the reduce task is done
-	TaskDone(task.TaskNum, false)
+	ReduceTaskDone(reduce_task.TaskNum)
 }
 
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// Your worker implementation here.
-
 	for {
-		task_reply := GetTask()
-		task := task_reply.Task
-		nReduce := task_reply.NReduce
+		map_task_reply := GetMapTask()
+		fmt.Printf("map task reply: %v\n", map_task_reply)
+		map_task := map_task_reply.MapTask
 
-		if task.IsMap {
-			DoMapTask(task, mapf, nReduce)
-		} else {
-			DoReduceTask(task, reducef)
+		if map_task.TaskState == NO_MORE_TASKS {
+			break
 		}
+
+		nReduce := map_task_reply.NReduce
+
+		DoMapTask(map_task, mapf, nReduce)
 		time.Sleep(10 * time.Millisecond)
 	}
-}
 
-func TaskDone(task_num int, is_map bool) {
-	args := TaskDoneArgs{
-		TaskNum: task_num,
-		IsMap:   is_map,
+	for {
+		reduce_task_ask := GetReduceTask()
+		reduce_task := reduce_task_ask.ReduceTask
+
+		if reduce_task.TaskState == NO_MORE_TASKS {
+			os.Exit(0)
+		} else if reduce_task.TaskState == NO_TASK_READY {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+
+		DoReduceTask(reduce_task, reducef)
+		time.Sleep(10 * time.Millisecond)
 	}
-	reply := TaskDoneReply{}
-	ok := call("Coordinator.TaskDone", &args, &reply)
-	if ok {
-		fmt.Printf("task %d is done\n", task_num)
-	} else {
-		fmt.Printf("call failed!\n")
-	}
-}
-func GetTask() TaskReply {
-	args := TaskArgs{}
-	reply := TaskReply{}
-	ok := call("Coordinator.GiveTask", &args, &reply)
-	if ok {
-		fmt.Printf("reply.task %v\n", reply.Task)
-	} else {
-		fmt.Printf("call failed!\n")
-	}
-	return reply
 }
 
 // send an RPC request to the coordinator, wait for the response.
