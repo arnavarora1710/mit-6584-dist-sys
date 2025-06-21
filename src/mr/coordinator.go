@@ -63,7 +63,7 @@ type Coordinator struct {
 	NReduce int
 	// number of map tasks
 	NMap int
-	// list of workers
+	// map from worker_id to worker_info
 	Workers map[int]WorkerInfo
 }
 
@@ -125,12 +125,6 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	// check if all reduce tasks are done
-	for _, task := range c.MapTasks {
-		if task.TaskState != DONE {
-			return false
-		}
-	}
-
 	for _, task := range c.ReduceTasks {
 		if task.TaskState != DONE {
 			return false
